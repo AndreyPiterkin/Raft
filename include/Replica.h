@@ -47,6 +47,7 @@ private:
     void redirect(const json& original_message);
     void convert_to_follower(const json& message);
     void issue_append(const json& message);
+    void handleLogOperation(const std::function<void(void)>& thunk);
 
     // Config member fields
     std::string m_id;
@@ -74,6 +75,7 @@ private:
     int votes = 0;
     bool received_message = false;
     bool append_confirmed = true;
+    std::mutex m_mutex;
 
 };
 

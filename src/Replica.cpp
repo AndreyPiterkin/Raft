@@ -7,6 +7,8 @@
 #include <string>
 #include <iostream>
 #include <utility>
+#include <mutex>
+
 
 #define BROADCAST "FFFF"
 #define log_int_size ((int)this->m_log.size())
@@ -27,7 +29,6 @@ Replica::Replica(int port, std::string ip, std::string id, std::vector<std::stri
 
     this->m_next_index = std::vector<int>(this->m_others_length);
     this->m_match_index = std::vector<int>(this->m_others_length);
-
 
     for (int i = 0; i < this->m_others_length; ++i) {
         this->m_next_index.at(i) = 0;
@@ -127,6 +128,11 @@ void Replica::issue_append(const json &message) {
     }
 }
 
+void Replica::handleLogOperation(const std::function<void(void)>& thunk) {
+    const std::lock_guard<std::mutex> lock(this->m_mutex);
+    thunk();
+}
+
 /**
  * Respond to an AppendEntries RPC.
  * @param message an AppendEntries RPC
@@ -156,16 +162,19 @@ void Replica::handle_append(const json &message) {
         return;
     }
 
-    if (message["prevLogIndex"] == -1) {
-        this->m_log.clear();
-    } else if (message["prevLogIndex"] >= 0) {
-        this->m_log.erase(this->m_log.begin() + message["prevLogIndex"] + 1, this->m_log.end());
-    }
+    this->handleLogOperation(
+            [&]() {
+                if (message["prevLogIndex"] == -1) {
+                    this->m_log.clear();
+                } else if (message["prevLogIndex"] >= 0) {
+                    this->m_log.erase(this->m_log.begin() + message["prevLogIndex"] + 1, this->m_log.end());
+                }
 
-    std::vector<std::pair<int, json>> entries = message["entries"].get<std::vector<std::pair<int, json>>>();
-    for (auto entry : entries) {
-        this->m_log.push_back(entry);
-    }
+                std::vector<std::pair<int, json>> entries = message["entries"].get<std::vector<std::pair<int, json>>>();
+                for (auto entry : entries) {
+                    this->m_log.push_back(entry);
+                }
+            });
 
     this->m_sock_manager->send({
        {"src", this->m_id},
@@ -313,10 +322,10 @@ void Replica::handle_get(const json &message) {
 void Replica::handle_put(const json &message) {
     if (this->m_id != this->m_leader) this->redirect(message);
     else {
-        this->m_log.push_back(std::pair<int, json>(this->m_current_term, message));
-//        if(append_confirmed) {
+        handleLogOperation([&]{
+            this->m_log.push_back(std::pair<int, json>(this->m_current_term, message));
+        });
         this->issue_append(message);
-//        }
     };
 }
 
